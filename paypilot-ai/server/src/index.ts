@@ -14,15 +14,30 @@ import { AppError } from './http';
 
 const app = express();
 
+// Trust proxy (Render deployment)
 app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
 
+// CORS configuration
+const allowedOrigins = [
+  config.clientUrl,
+  'http://localhost:5173'
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: config.clientUrl,
-    credentials: true
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('CORS: Origin not allowed'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   })
 );
 
@@ -48,7 +63,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// PayPal webhook - raw body required for signature verification
+// PayPal webhook - raw body must be before JSON parser
 const rawBody = express.raw({
   type: '*/*',
   limit: '1mb'
@@ -65,7 +80,7 @@ app.use(cookieParser());
 app.use(
   '/api',
   rateLimit({
-    windowMs: 60_000,
+    windowMs: 60 * 1000,
     limit: 300,
     standardHeaders: true,
     legacyHeaders: false
@@ -76,7 +91,7 @@ app.use(
 app.use(
   '/api/auth',
   rateLimit({
-    windowMs: 15 * 60_000,
+    windowMs: 15 * 60 * 1000,
     limit: 60,
     standardHeaders: true,
     legacyHeaders: false
@@ -86,19 +101,22 @@ app.use(
 
 // AI rate limiting
 const chatLimit = rateLimit({
-  windowMs: 60_000,
+  windowMs: 60 * 1000,
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false
 });
 
-app.use(['/api/assistant/message', '/api/ai'], chatLimit);
+app.use(
+  ['/api/assistant/message', '/api/ai'],
+  chatLimit
+);
 
 // Payment event rate limiting
 app.use(
   '/api/orders/:id/payment-event',
   rateLimit({
-    windowMs: 60_000,
+    windowMs: 60 * 1000,
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false
@@ -127,6 +145,7 @@ app.use(
   ) => {
     if (err instanceof ZodError) {
       return res.status(400).json({
+        success: false,
         error: err.issues
           .map(
             (i) =>
@@ -139,6 +158,7 @@ app.use(
 
     if (err instanceof AppError) {
       return res.status(err.status).json({
+        success: false,
         error: err.message,
         code: err.code,
         ...(err.data ? { data: err.data } : {})
@@ -148,13 +168,14 @@ app.use(
     console.error('Server error:', err);
 
     return res.status(500).json({
+      success: false,
       error: 'Something went wrong on our side. Try again.',
       code: 'INTERNAL'
     });
   }
 );
 
-// Start server after successful MongoDB connection
+// Start server after MongoDB connection
 const startServer = async () => {
   try {
     await mongoose.connect(config.mongoUri);
@@ -167,9 +188,15 @@ const startServer = async () => {
         `PayPal: ${config.paypal.clientId ? 'Configured' : 'NOT configured'}`
       );
       console.log(`AI Provider: ${config.ai.provider}`);
+      console.log(`Allowed frontend origins: ${allowedOrigins.join(', ')}`);
     });
+
   } catch (error: any) {
-    console.error('MongoDB connection failed:', error.message);
+    console.error(
+      'MongoDB connection failed:',
+      error.message
+    );
+
     process.exit(1);
   }
 };
