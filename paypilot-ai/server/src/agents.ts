@@ -393,7 +393,7 @@ You are the Payment Agent. Call prepare_checkout once. You can NEVER charge mone
     fallback: async (use) => { const r = await use('prepare_checkout'); return { summary: `Your order is ready: ${r.itemCount} line item${r.itemCount > 1 ? 's' : ''} for ${inr(r.totalInr)}. Review it and approve to continue to PayPal.`, issues: [] }; },
   }).catch((e) => ({ summary: e.message, issues: [e.message], failed: true } as any));
   if (!rep.failed) {
-    const { Order } = await import('./models');
+  const { Order } = await import('./models.js');
     order = await Order.findOne({ userId: ctx.userId, status: 'awaiting_approval' }).sort({ createdAt: -1 }).lean();
   }
   if (!order) return { message: rep.summary };
